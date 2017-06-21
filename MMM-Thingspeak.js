@@ -9,115 +9,19 @@
 
 Module.register("MMM-Thingspeak", {
 	defaults: {
-		updateInterval: 60000,
-		retryDelay: 5000
+		updateInterval: 300000,
+		retryDelay: 5000,
+		results: '1',
+		apiUrl1: 'https://api.thingspeak.com/channels/',
+		apiUrl2: '/feeds.json?api_key=',
+		apiUrl3: '&results='
 	},
 
-	requiresVersion: "2.1.0", // Required version of MagicMirror
-
-	start: function() {
-		var self = this;
-		var dataRequest = null;
-		var dataNotification = null;
-
-		//Flag for check if module is loaded
-		this.loaded = false;
-
-		// Schedule update timer.
-		this.getData();
-		setInterval(function() {
-			self.updateDom();
-		}, this.config.updateInterval);
-	},
-
-	/*
-	 * getData
-	 * function example return data and show it in the module wrapper
-	 * get a URL request
-	 *
-	 */
-	getData: function() {
-		var self = this;
-
-		var urlApi = "https://jsonplaceholder.typicode.com/posts/1";
-		var retry = true;
-
-		var dataRequest = new XMLHttpRequest();
-		dataRequest.open("GET", urlApi, true);
-		dataRequest.onreadystatechange = function() {
-			console.log(this.readyState);
-			if (this.readyState === 4) {
-				console.log(this.status);
-				if (this.status === 200) {
-					self.processData(JSON.parse(this.response));
-				} else if (this.status === 401) {
-					self.updateDom(self.config.animationSpeed);
-					Log.error(self.name, this.status);
-					retry = false;
-				} else {
-					Log.error(self.name, "Could not load data.");
-				}
-				if (retry) {
-					self.scheduleUpdate((self.loaded) ? -1 : self.config.retryDelay);
-				}
-			}
-		};
-		dataRequest.send();
-	},
-
-
-	/* scheduleUpdate()
-	 * Schedule next update.
-	 *
-	 * argument delay number - Milliseconds before next update.
-	 *  If empty, this.config.updateInterval is used.
-	 */
-	scheduleUpdate: function(delay) {
-		var nextLoad = this.config.updateInterval;
-		if (typeof delay !== "undefined" && delay >= 0) {
-			nextLoad = delay;
-		}
-		nextLoad = nextLoad ;
-		var self = this;
-		setTimeout(function() {
-			self.getData();
-		}, nextLoad);
-	},
-
-	getDom: function() {
-		var self = this;
-
-		// create element wrapper for show into the module
-		var wrapper = document.createElement("div");
-		// If this.dataRequest is not empty
-		if (this.dataRequest) {
-			var wrapperDataRequest = document.createElement("div");
-			// check format https://jsonplaceholder.typicode.com/posts/1
-			wrapperDataRequest.innerHTML = this.dataRequest.title;
-
-			var labelDataRequest = document.createElement("label");
-			// Use translate function
-			//             this id defined in translations files
-			labelDataRequest.innerHTML = this.translate("TITLE");
-
-
-			wrapper.appendChild(labelDataRequest);
-			wrapper.appendChild(wrapperDataRequest);
-		}
-
-		// Data from helper
-		if (this.dataNotification) {
-			var wrapperDataNotification = document.createElement("div");
-			// translations  + datanotification
-			wrapperDataNotification.innerHTML =  this.translate("UPDATE") + ": " + this.dataNotification.date;
-
-			wrapper.appendChild(wrapperDataNotification);
-		}
-		return wrapper;
-	},
 
 	getScripts: function() {
-		return [];
+		return [
+			'moment.js'
+		];
 	},
 
 	// Load translations files
@@ -129,23 +33,140 @@ Module.register("MMM-Thingspeak", {
 		};
 	},
 
-	processData: function(data) {
+	start: function() {
+		Log.info('Starting module: ' + this.name);
+		this.sendSocketNotification('init');
 		var self = this;
-		this.dataRequest = data;
-		if (this.loaded === false) { self.updateDom(self.config.animationSpeed) ; }
-		this.loaded = true;
-
-		// the data if load
-		// send notification to helper
-		this.sendSocketNotification("MMM-Thingspeak-NOTIFICATION_TEST", data);
+		this.thingspeakUrl1 = this.config.apiUrl1 + this.config.channelID1 + this.config.apiUrl2 + this.config.readAPI1 + this.config.apiUrl3 + this.config.results;
+		this.thingspeakUrl2 = this.config.apiUrl1 + this.config.channelID2 + this.config.apiUrl2 + this.config.readAPI2 + this.config.apiUrl3 + this.config.results;
+		this.dataFromThingspeak;
+		this.returnData = {};
+		this.returnChannel1;
+		this.returnChannel2;
+		this.returnFeed1;
+		this.returnFeed2;
+		this.loaded = false;
+		this.scheduleUpdate(1000);
+		setInterval(function() {
+			self.updateDom();
+		}, 1000);
 	},
 
-	// socketNotificationReceived from helper
-	socketNotificationReceived: function (notification, payload) {
-		if(notification === "MMM-Thingspeak-NOTIFICATION_TEST") {
-			// set dataNotification
-			this.dataNotification = payload;
-			this.updateDom();
+	getDom: function() {
+		var self = this;
+		var wrapper = document.createElement('div');
+		if(!this.loaded){
+			wrapper.innerHTML = this.translate('LOADING');
+			wrapper.className = "dimmed light small";
+			return wrapper;
+		}
+
+		if(this.config.header){
+			var header = document.createElement('header');
+			header.innerHTML = this.config.title;
+			header.className = 'align-left';
+			wrapper.appendChild(header);
+		}
+
+		var table = document.createElement('table');
+		table.className = "xsmall";
+
+		var channelData1 = this.returnChannel1;
+		var feedData1 = this.returnFeed1;
+
+		var r1 = document.createElement('tr');
+		table.appendChild(r1);
+
+		var f1 = document.createElement('td');
+		f1.className = "align-left";
+		f1.innerHTML = channelData1.description;
+		r1.appendChild(f1);
+		
+		var f2 = document.createElement('td');
+		f2.className = "align-right";
+		f2.innerHTML = parseInt(feedData1[0].field1).toFixed(1) + '&deg; C';
+		r1.appendChild(f2);
+
+		var f3 = document.createElement('td');
+		f3.className = "align-right";
+		f3.innerHTML = parseInt(feedData1[0].field2).toFixed(1) + ' %';
+		r1.appendChild(f3);
+
+		var channelData2 = this.returnChannel2;
+		var feedData2 = this.returnFeed2;
+
+		var r2 = document.createElement('tr');
+		table.appendChild(r2);
+
+		var f4 = document.createElement('td');
+		f4.className = "align-left";
+		f4.innerHTML = channelData2.description;
+		r2.appendChild(f4);
+		
+		var f5 = document.createElement('td');
+		f5.className = "align-right";
+		f5.innerHTML = parseInt(feedData2[0].field1).toFixed(1) + '&deg; C';
+		r2.appendChild(f5);
+
+		var f6 = document.createElement('td');
+		f6.className = "align-right";
+		f6.innerHTML = parseInt(feedData2[0].field2).toFixed(1) + ' %';
+		r2.appendChild(f6);
+
+		wrapper.appendChild(table);
+		return wrapper;
+	},
+
+	getThingspeakData: function() {
+		Log.info('Updating data now');
+		this.sendSocketNotification('MMM-Thingspeak-GET_DATA', {
+			config: this.config,
+			thingspeakUrl1: this.thingspeakUrl1,
+			thingspeakUrl2: this.thingspeakUrl2,
+		});
+		this.scheduleUpdate();
+	},
+
+    processData: function(obj) {
+        if(obj){
+        	Log.info("Processing data");
+        	Log.info(obj);
+            this.loaded = true;
+            this.returnChannel1 = obj.feed1.channel;
+            this.returnFeed1 = obj.feed1.feeds;
+            this.returnChannel2 = obj.feed2.channel;
+            this.returnFeed2 = obj.feed2.feeds;
+            Log.info(this.returnChannel);
+            Log.info(this.returnFeed);
+        }
+        else{
+            Log.info('I have no data!');
+        }
+    },
+
+	socketNotificationReceived: function(notification, payload) {
+		if(notification === 'MMM-Thingspeak-RETURN_DATA') {
+			Log.info('Got data!');
+			Log.info(payload);
+			this.processData(payload);
+			this.updateDom(1000);
+			}
+		if(notification === 'MMM-Thingspeak-NO_DATA') {
+			Log.info('No data in return');
 		}
 	},
+
+	scheduleUpdate: function(delay) {
+		var nextLoad = this.config.updateInterval;
+		if (typeof delay !== "undefined" && delay >= 0) {
+			nextLoad = delay;
+		}
+
+		var self = this;
+		setTimeout(function() {
+			self.getThingspeakData();
+		}, nextLoad);
+	},
+
+
 });
